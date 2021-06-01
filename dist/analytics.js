@@ -90,6 +90,9 @@ define(['exports', 'aurelia-dependency-injection', 'aurelia-event-aggregator', '
 			},
 			getUrl: function getUrl(payload) {
 				return payload.instruction.fragment;
+			},
+			getDimensions: function getDimensions() {
+				return [];
 			}
 		},
 		clickTracking: {
@@ -134,6 +137,7 @@ define(['exports', 'aurelia-dependency-injection', 'aurelia-event-aggregator', '
 			var options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : defaultOptions;
 
 			this._options = (0, _deepmerge2.default)(defaultOptions, options);
+
 			if (!this._initialized) {
 				var errorMessage = "Analytics must be initialized before use.";
 				this._log('error', errorMessage);
@@ -154,7 +158,18 @@ define(['exports', 'aurelia-dependency-injection', 'aurelia-event-aggregator', '
 				(ga.q = ga.q || []).push(arguments);
 			};
 			ga.l = +new Date();
-			ga('create', id, 'auto');
+
+			if (window.location.protocol === 'file:') {
+				ga('create', id, { storage: 'none', 'clientId': localStorage.getItem('ga:clientId') });
+				ga('set', 'checkProtocolTask', null);
+				ga('set', 'checkStorageTask', null);
+				ga('set', 'historyImportTask', null);
+				ga(function (tracker) {
+					localStorage.setItem('ga:clientId', tracker.get('clientId'));
+				});
+			} else {
+				ga('create', id, 'auto');
+			}
 
 			this._initialized = true;
 		};
@@ -183,7 +198,7 @@ define(['exports', 'aurelia-dependency-injection', 'aurelia-event-aggregator', '
 					return payload.instruction.config.name === routeName;
 				})) return;
 
-				_this._trackPage(_this._options.pageTracking.getUrl(payload), _this._options.pageTracking.getTitle(payload));
+				_this._trackPage(_this._options.pageTracking.getUrl(payload), _this._options.pageTracking.getTitle(payload), _this._options.pageTracking.getDimensions());
 			});
 		};
 
@@ -262,7 +277,7 @@ define(['exports', 'aurelia-dependency-injection', 'aurelia-event-aggregator', '
 			ga('send', 'event', tracking.category, tracking.action, tracking.label, tracking.value);
 		};
 
-		Analytics.prototype._trackPage = function _trackPage(path, title) {
+		Analytics.prototype._trackPage = function _trackPage(path, title, dimensions) {
 			this._log('debug', 'Tracking path = ' + path + ', title = ' + title);
 			if (!this._initialized) {
 				this._log('warn', "Try calling 'init()' before calling 'attach()'.");
@@ -274,6 +289,13 @@ define(['exports', 'aurelia-dependency-injection', 'aurelia-event-aggregator', '
 				title: title,
 				anonymizeIp: this._options.anonymizeIp.enabled
 			});
+
+			if (dimensions) {
+				dimensions.forEach(function (value, index) {
+					ga('set', 'dimension' + (index + 1), value);
+				});
+			}
+
 			ga('send', 'pageview');
 		};
 
