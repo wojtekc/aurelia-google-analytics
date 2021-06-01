@@ -7,21 +7,15 @@
 
 'use strict';
 
-import {
-	inject
-} from 'aurelia-dependency-injection';
-import {
-	EventAggregator
-} from 'aurelia-event-aggregator';
+import { inject } from 'aurelia-dependency-injection';
+import { EventAggregator } from 'aurelia-event-aggregator';
 import * as LogManager from 'aurelia-logging';
 import deepmerge from 'deepmerge';
 
 /*
 .plugin('aurelia-google-analytics', config => {
+			config.init('<Tracker ID here>');
 			config.attach({
-				customTracking: {
-					useNativeGaScript: true
-				},
 				logging: {
 					enabled: true
 				},
@@ -37,6 +31,9 @@ import deepmerge from 'deepmerge';
 					},
 					getUrl: payload => {
 						return payload.instruction.fragment;
+					},
+					getDimensions: function(payload) {
+						return
 					}
 				},
 				clickTracking: {
@@ -48,7 +45,6 @@ import deepmerge from 'deepmerge';
 					}
 				}
 			});
-			config.init('<Tracker ID here>');
 		})
 */
 
@@ -78,7 +74,6 @@ const criteria = {
 };
 
 const defaultOptions = {
-	useNativeGaScript: true,
 	logging: {
 		enabled: true
 	},
@@ -98,20 +93,20 @@ const defaultOptions = {
 		getUrl: (payload) => {
 			return payload.instruction.fragment;
 		},
-		customFnTrack: false,
+		getDimensions: () => {
+			return [];
+		}
 	},
 	clickTracking: {
 		enabled: false,
 		filter: (element) => {
 			return criteria.isAnchor(element) || criteria.isButton(element);
-		},
-		customFnTrack: false,
+		}
 	},
 	exceptionTracking: {
 		enabled: true,
 		applicationName: undefined,
-		applicationVersion: undefined,
-		customFnTrack: false,
+		applicationVersion: undefined
 	}
 };
 
@@ -142,11 +137,7 @@ export class Analytics {
 
 	attach(options = defaultOptions) {
 		this._options = deepmerge(defaultOptions, options);
-
-		if (!this._options.useNativeGaScript) {
-			this._initialized = true;
-		}
-		
+	
 		if (!this._initialized) {
 			const errorMessage = "Analytics must be initialized before use.";
 			this._log('error', errorMessage);
@@ -159,10 +150,6 @@ export class Analytics {
 	}
 
 	init(id) {
-		if (!this._options.useNativeGaScript) {
-			return;
-		}
-
 		const script = document.createElement('script');
 		script.text = "(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){" +
 			"(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o)," +
@@ -170,22 +157,22 @@ export class Analytics {
 			"})(window,document,'script','https://www.google-analytics.com/analytics.js','ga');";
 		document.querySelector('body').appendChild(script);
 
-		this._initFnGa();
-		ga.l = +new Date;
-		this._sendFnGa('create', id, 'auto');
-
-		this._initialized = true;
-	}
-
-	_initFnGa() {
 		window.ga = window.ga || function () {
 			(ga.q = ga.q || []).push(arguments)
 		};
-	}
+		ga.l = +new Date;
 
-	_sendFnGa() {
-		this._initFnGa();
-		window.ga.apply(window.ga, arguments);
+		if (window.location.protocol === 'file:') {
+			ga('create', id, { storage: 'none', 'clientId': localStorage.getItem('ga:clientId') });
+			ga('set', 'checkProtocolTask', null); // Disable file protocol checking.
+			ga('set', 'checkStorageTask', null); // Disable cookie storage checking.
+			ga('set', 'historyImportTask', null); // Disable history checking (requires reading from cookies).
+			ga((tracker) => { localStorage.setItem('ga:clientId', tracker.get('clientId')); });
+		} else {
+			ga('create', id, 'auto');
+		}
+
+		this._initialized = true;
 	}
 
 	_attachClickTracker() {
@@ -214,7 +201,11 @@ export class Analytics {
 					)
 					return;
 
-				this._trackPage(this._options.pageTracking.getUrl(payload), this._options.pageTracking.getTitle(payload))
+				this._trackPage(
+					this._options.pageTracking.getUrl(payload), 
+					this._options.pageTracking.getTitle(payload), 
+					this._options.pageTracking.getDimensions()
+				);
 			});
 	}
 
@@ -254,10 +245,7 @@ export class Analytics {
 					exOptions.appVersion = options.exceptionTracking.applicationVersion;
 				}
 
-				if (options.exceptionTracking.customFnTrack) {
-					return options.exceptionTracking.customFnTrack(exOptions);
-				}
-				this._sendFnGa('send', 'exception', exOptions);
+				ga('send', 'exception', exOptions);
 			}
 
 			if (typeof existingWindowErrorCallback === 'function') {
@@ -295,31 +283,28 @@ export class Analytics {
 		};
 
 		this._log('debug', `click: category '${tracking.category}', action '${tracking.action}', label '${tracking.label}', value '${tracking.value}'`);
-		if (this._options.clickTracking.customFnTrack) {
-			return this._options.clickTracking.customFnTrack(tracking);
-		}
-
-		this._sendFnGa('send', 'event', tracking.category, tracking.action, tracking.label, tracking.value);
+		ga('send', 'event', tracking.category, tracking.action, tracking.label, tracking.value);
 	}
 
-	_trackPage(path, title) {
+	_trackPage(path, title, dimensions) {
 		this._log('debug', `Tracking path = ${path}, title = ${title}`);
 		if (!this._initialized) {
 			this._log('warn', "Try calling 'init()' before calling 'attach()'.");
 			return;
 		}
 
-		const props = {
+		ga('set', {
 			page: path,
 			title: title,
 			anonymizeIp: this._options.anonymizeIp.enabled
-		};
+		});
 
-		if (this._options.pageTracking.customFnTrack) {
-			return this._options.pageTracking.customFnTrack(props);
+		if (dimensions) {
+			dimensions.forEach((value, index) => {
+				ga('set', `dimension${index + 1}`, value);
+			});
 		}
 
-		this._sendFnGa('set', props);
-		this._sendFnGa('send', 'pageview');
+		ga('send', 'pageview');
 	}
 }
